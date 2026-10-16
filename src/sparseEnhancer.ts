@@ -82,6 +82,11 @@ export interface SparseOptions {
    * Defaults to `keep-running`.
    */
   whileIdle?: WhileIdle;
+  /**
+   * How many idle segments may wait for their idle timeout at once. Past it,
+   * the ones idle the longest are evicted right away. Defaults to `Infinity`.
+   */
+  maxIdle?: number;
 }
 
 interface Entry {
@@ -125,10 +130,19 @@ const scheduleIdle = (callback: () => void) => {
  * static state; segment slices live next to it under their keys.
  */
 export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<SparseStoreExt> {
-  const { epicRunner, idleTimeout = defaultIdleTimeout, whileIdle = 'keep-running' } = options;
+  const {
+    epicRunner,
+    idleTimeout = defaultIdleTimeout,
+    whileIdle = 'keep-running',
+    maxIdle = Infinity,
+  } = options;
 
   if (!(idleTimeout >= 0)) {
     throw new RangeError('The idle timeout must be a non-negative number');
+  }
+
+  if (!(maxIdle >= 0)) {
+    throw new RangeError('maxIdle must be a non-negative number');
   }
 
   if (!whileIdleValues.includes(whileIdle)) {
@@ -139,6 +153,8 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
     (createStore: StoreEnhancerStoreCreator) =>
     (rootReducer: AnyReducer, preloadedState?: unknown) => {
       const entries = new Map<string, Entry>();
+      // Idle entries, the one idle the longest first.
+      const idleEntries = new Set<Entry>();
       // Keys being removed by the EVICT action currently being reduced.
       let evictingKeys: ReadonlySet<string> = emptyKeys;
 
@@ -390,10 +406,16 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
             scheduleSweep();
           }, timeout);
         }
+        idleEntries.add(entry);
         emit({ type: 'idle', key: entry.segment.key });
+
+        while (idleEntries.size > maxIdle) {
+          evict(idleEntries.values().next().value!);
+        }
       };
 
       const revive = (entry: Entry) => {
+        idleEntries.delete(entry);
         clearTimeout(entry.timer);
         entry.timer = undefined;
         entry.expired = false;
@@ -411,6 +433,7 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
       };
 
       const evict = (entry: Entry) => {
+        idleEntries.delete(entry);
         clearTimeout(entry.timer);
         entries.delete(entry.segment.key);
 
