@@ -73,6 +73,7 @@
   },
   "scripts": {
     "build": "yarn clean && tsdown",
+    "prepack": "yarn build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
