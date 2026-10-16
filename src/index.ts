@@ -10,3 +10,11 @@ export type {
   StaticState,
   WhileIdle,
 } from './segment';
+export { SparseActionTypes, sparseEnhancer } from './sparseEnhancer';
+export type {
+  SparseAction,
+  SparseController,
+  SparseEvent,
+  SparseOptions,
+  SparseStoreExt,
+} from './sparseEnhancer';
