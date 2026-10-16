@@ -1,0 +1,5 @@
+# Keep LF in the working tree on every platform. Without this, a Windows
+# checkout with `core.autocrlf=true` expands the stored LF to CRLF on disk,
+# which makes `oxfmt --check` report every file as unformatted even though the
+# committed content is already correct.
+* text=auto eol=lf
