@@ -264,7 +264,13 @@ nothing.
 ## React
 
 ```ts
-import { SparseScope, useSparseSegments, createSparseReact } from 'redux-sparse-kit/react';
+import {
+  SparseScope,
+  useSparseSegments,
+  useInjectReducer,
+  useInjectEpic,
+  createSparseReact,
+} from 'redux-sparse-kit/react';
 ```
 
 - `<SparseScope segments fallback>` holds the segments while mounted and
@@ -280,6 +286,28 @@ import { SparseScope, useSparseSegments, createSparseReact } from 'redux-sparse-
 The bindings find the store in react-redux's context, so they work with any
 react-redux 8.1 or later. Pass `createSparseReact({ context })` when the
 `<Provider>` was given a custom context.
+
+### Injecting by key
+
+Code that injects reducers by key and epics one by one, rather than through
+defined segments, can use two hooks that make the segments for it:
+
+```ts
+function OrdersPanel() {
+  const ready = useInjectReducer({ key: 'orders', reducer: ordersReducer });
+  useInjectEpic({ epic: loadOrdersEpic });
+  // ...
+}
+```
+
+- The first injection under a key makes its segment, with its reducer and
+  options; later ones share it. A different reducer under the same key is
+  ignored, with a warning in development.
+- An epic runs once however many components inject it, and stops when the
+  last of them unmounts. `epic: undefined` injects nothing.
+- Both take `idleTimeout` and `whileIdle` for the segment they make, for
+  example `idleTimeout: Infinity` to keep it for good once injected.
+- A key of the static state is left to the root reducer.
 
 ### Scope checks
 

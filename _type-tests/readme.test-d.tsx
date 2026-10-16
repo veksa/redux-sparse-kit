@@ -20,7 +20,13 @@ import type {
 import { defineSegment, SparseActionTypes, sparseEnhancer } from '../src';
 import { createEpicRunner } from '../src/observable';
 import type { ScopeViolation } from '../src/react';
-import { createSparseReact, SparseScope, useSparseSegments } from '../src/react';
+import {
+  createSparseReact,
+  SparseScope,
+  useInjectEpic,
+  useInjectReducer,
+  useSparseSegments,
+} from '../src/react';
 
 interface Account {
   id: string;
@@ -132,6 +138,19 @@ const root = (
 );
 
 expectTypeOf(useSparseSegments([ordersSegment])).toEqualTypeOf<boolean>();
+
+// Injecting by key
+expectTypeOf(useInjectReducer({ key: 'orders', reducer: ordersReducer })).toEqualTypeOf<boolean>();
+expectTypeOf(useInjectEpic({ epic: loadOrdersEpic })).toEqualTypeOf<boolean>();
+useInjectReducer({
+  key: 'orders',
+  reducer: ordersReducer,
+  idleTimeout: Infinity,
+  whileIdle: 'freeze',
+});
+useInjectEpic({ epic: undefined, idleTimeout: 0 });
+// @ts-expect-error the key is required
+useInjectReducer({ reducer: ordersReducer });
 
 const violations: ScopeViolation[] = [];
 const custom = createSparseReact({

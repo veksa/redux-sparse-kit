@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 import { createElement, useContext, useEffect, useLayoutEffect, useMemo, useReducer } from 'react';
 import type { AnySegment } from '../segment';
 import type { SparseController } from '../sparseEnhancer';
+import type { InjectEpicOptions, InjectReducerOptions } from './injectedSegments';
+import { getEpicSegment, getReducerSegment } from './injectedSegments';
 import type { ReactReduxContextLike } from './reactReduxContext';
 import { getReactReduxContext } from './reactReduxContext';
 import type { ScopeViolationHandler } from './scopeChecks';
@@ -82,6 +84,20 @@ export interface SparseReact {
    * no segments checks the reads below it that no scope holds at all.
    */
   SparseScope(props: SparseScopeProps): ReactNode;
+  /**
+   * Injects a reducer under a key for as long as the calling component is
+   * mounted, and returns whether its slice is present yet. The segment is made
+   * by the first injection under the key, with its reducer and options, and
+   * shared by every later one. A key of the static state is left to the root
+   * reducer.
+   */
+  useInjectReducer<State>(options: InjectReducerOptions<State>): boolean;
+  /**
+   * Runs an epic for as long as the calling component is mounted, once
+   * however many components inject it. The segment that runs it is made by its
+   * first injection, with its options.
+   */
+  useInjectEpic(options: InjectEpicOptions): boolean;
 }
 
 /** Creates the React bindings for stores made with `sparseEnhancer`. */
@@ -123,6 +139,18 @@ export function createSparseReact(options: SparseReactOptions = {}): SparseReact
     return ready;
   };
 
+  const noSegments: readonly AnySegment[] = [];
+
+  const useInjectReducer = <State>(injection: InjectReducerOptions<State>): boolean => {
+    const sparse = useSparseController();
+    return useSparseSegments(
+      sparse.isStatic(injection.key) ? noSegments : [getReducerSegment(injection)],
+    );
+  };
+
+  const useInjectEpic = ({ epic, ...injection }: InjectEpicOptions): boolean =>
+    useSparseSegments(epic ? [getEpicSegment(epic, injection)] : noSegments);
+
   function SparseScope({ segments, fallback = null, children }: SparseScopeProps): ReactNode {
     return useSparseSegments(segments) ? children : fallback;
   }
@@ -160,5 +188,10 @@ export function createSparseReact(options: SparseReactOptions = {}): SparseReact
     );
   }
 
-  return { useSparseSegments, SparseScope: checks ? CheckedSparseScope : SparseScope };
+  return {
+    useSparseSegments,
+    SparseScope: checks ? CheckedSparseScope : SparseScope,
+    useInjectReducer,
+    useInjectEpic,
+  };
 }
