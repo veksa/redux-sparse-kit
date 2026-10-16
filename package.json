@@ -80,6 +80,7 @@
     "@types/node": "^24.0.3",
     "@types/react": "^19.0.12",
     "@types/react-dom": "^19.0.4",
+    "@veksa/react-redux": "9.3.3",
     "@vitest/coverage-v8": "^4.1.10",
     "expect-type": "^1.2.1",
     "jsdom": "^30.0.0",

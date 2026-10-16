@@ -875,6 +875,22 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@veksa/react-redux@npm:9.3.3":
+  version: 9.3.3
+  resolution: "@veksa/react-redux@npm:9.3.3"
+  peerDependencies:
+    "@types/react": ^18.2.25 || ^19
+    react: ^18.0 || ^19
+    redux: ^5.0.0
+  peerDependenciesMeta:
+    "@types/react":
+      optional: true
+    redux:
+      optional: true
+  checksum: 10/1da9670ccea987595a31352a49352aec8a4ffcb2798077e4e20cb6b0e25a69a0e4b138c6ae9c94217268dd7b86080cc94cf17350587517749e9a787683e394af
+  languageName: node
+  linkType: hard
+
 "@vitest/coverage-v8@npm:^4.1.10":
   version: 4.1.12
   resolution: "@vitest/coverage-v8@npm:4.1.12"
@@ -2131,6 +2147,7 @@ __metadata:
     "@types/node": "npm:^24.0.3"
     "@types/react": "npm:^19.0.12"
     "@types/react-dom": "npm:^19.0.4"
+    "@veksa/react-redux": "npm:9.3.3"
     "@vitest/coverage-v8": "npm:^4.1.10"
     expect-type: "npm:^1.2.1"
     jsdom: "npm:^30.0.0"
