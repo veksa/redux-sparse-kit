@@ -87,6 +87,11 @@ export interface SparseOptions {
    * the ones idle the longest are evicted right away. Defaults to `Infinity`.
    */
   maxIdle?: number;
+  /**
+   * Stops the idle clock while the page is hidden, so that time spent in a
+   * background tab does not count towards the idle timeout. Defaults to `true`.
+   */
+  pauseWhenHidden?: boolean;
 }
 
 interface Entry {
@@ -97,6 +102,10 @@ interface Entry {
   stops: (() => void)[];
   /** Fires once the segment has been idle for its idle timeout. */
   timer: ReturnType<typeof setTimeout> | undefined;
+  /** Idle time left before it expires; `Infinity` when it never does. */
+  remaining: number;
+  /** When the running timer was started. */
+  startedAt: number;
   /** Idle for its whole idle timeout, so evicted by the next sweep. */
   expired: boolean;
   /** Idle with its epics stopped. */
@@ -135,7 +144,11 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
     idleTimeout = defaultIdleTimeout,
     whileIdle = 'keep-running',
     maxIdle = Infinity,
+    pauseWhenHidden = true,
   } = options;
+
+  const isHidden = () =>
+    pauseWhenHidden && typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
   if (!(idleTimeout >= 0)) {
     throw new RangeError('The idle timeout must be a non-negative number');
@@ -352,6 +365,8 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
           holders: 1,
           stops: [],
           timer: undefined,
+          remaining: Infinity,
+          startedAt: 0,
           expired: false,
           paused: false,
           frozen: false,
@@ -399,14 +414,12 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
           stopEpics(entry);
         }
 
-        if (timeout <= maxTimerDelay) {
-          entry.timer = setTimeout(() => {
-            entry.timer = undefined;
-            entry.expired = true;
-            scheduleSweep();
-          }, timeout);
+        entry.remaining = timeout > maxTimerDelay ? Infinity : timeout;
+        if (!isHidden()) {
+          startTimer(entry);
         }
         idleEntries.add(entry);
+        watchVisibility();
         emit({ type: 'idle', key: entry.segment.key });
 
         while (idleEntries.size > maxIdle) {
@@ -414,8 +427,62 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
         }
       };
 
+      const startTimer = (entry: Entry) => {
+        if (entry.remaining !== Infinity) {
+          entry.startedAt = Date.now();
+          entry.timer = setTimeout(() => {
+            entry.timer = undefined;
+            entry.expired = true;
+            scheduleSweep();
+          }, entry.remaining);
+        }
+      };
+
+      const pauseTimers = () => {
+        for (const entry of idleEntries) {
+          if (entry.timer !== undefined) {
+            clearTimeout(entry.timer);
+            entry.timer = undefined;
+            entry.remaining = Math.max(0, entry.remaining - (Date.now() - entry.startedAt));
+          }
+        }
+      };
+
+      const resumeTimers = () => {
+        for (const entry of idleEntries) {
+          if (entry.timer === undefined && !entry.expired) {
+            startTimer(entry);
+          }
+        }
+      };
+
+      const onVisibilityChange = () => {
+        if (isHidden()) {
+          pauseTimers();
+        } else {
+          resumeTimers();
+        }
+      };
+
+      let watchingVisibility = false;
+
+      /** Listens to the page visibility only while there are idle segments. */
+      const watchVisibility = () => {
+        const watch = idleEntries.size > 0;
+
+        if (watch !== watchingVisibility && pauseWhenHidden && typeof document !== 'undefined') {
+          watchingVisibility = watch;
+          if (watch) {
+            document.addEventListener('visibilitychange', onVisibilityChange);
+          } else {
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+          }
+        }
+      };
+
       const revive = (entry: Entry) => {
         idleEntries.delete(entry);
+        watchVisibility();
         clearTimeout(entry.timer);
         entry.timer = undefined;
         entry.expired = false;
@@ -434,6 +501,7 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
 
       const evict = (entry: Entry) => {
         idleEntries.delete(entry);
+        watchVisibility();
         clearTimeout(entry.timer);
         entries.delete(entry.segment.key);
 
