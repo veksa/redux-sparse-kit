@@ -120,6 +120,9 @@ const emptyKeys: ReadonlySet<string> = new Set();
 
 const defaultIdleTimeout = 60_000;
 
+// Reduced only by the root reducer, to learn the keys of the static state.
+const probeActionType = '@@sparse/PROBE';
+
 const whileIdleValues: readonly WhileIdle[] = ['keep-running', 'pause-epics', 'freeze'];
 
 // Longer delays overflow `setTimeout` and would fire right away.
@@ -175,8 +178,31 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
       // with a reducer. They keep reducing until the action that evicts them.
       const slices = new Map<string, Entry>();
 
+      // Keys of the static state: whatever the root reducer returns. Never
+      // treated as segment slices, even when a segment uses the same key.
+      let staticKeys: ReadonlySet<string> = emptyKeys;
+
+      const learnStaticKeys = (staticState: object) => {
+        let count = 0;
+        for (const key in staticState) {
+          count++;
+          if (!staticKeys.has(key)) {
+            staticKeys = new Set(Object.keys(staticState));
+            return;
+          }
+        }
+        if (count !== staticKeys.size) {
+          staticKeys = new Set(Object.keys(staticState));
+        }
+      };
+
+      /** Asks a root reducer for its keys before it reduces a real state. */
+      const probeStaticKeys = (root: AnyReducer) => {
+        learnStaticKeys(root(undefined, { type: probeActionType }) as object);
+      };
+
       const isDynamicKey = (key: string) =>
-        slices.has(key) || evictingKeys.has(key) || isSegmentKey(key);
+        !staticKeys.has(key) && (slices.has(key) || evictingKeys.has(key) || isSegmentKey(key));
 
       const wrapReducer =
         (root: AnyReducer): AnyReducer =>
@@ -193,17 +219,27 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
             }
           }
 
+          // Slices of segments that are not present yet, e.g. from a preloaded
+          // state: kept so that the segments start from them.
+          const pendingSlices: string[] = [];
+
           if (hasDynamicKeys) {
             staticState = {};
             for (const key in current) {
               if (!isDynamicKey(key)) {
                 staticState[key] = current[key];
+              } else if (!slices.has(key) && !evictingKeys.has(key)) {
+                pendingSlices.push(key);
               }
             }
           }
 
           const input = state === undefined ? undefined : (staticState ?? current);
           const nextStatic = root(input, action) as Record<string, unknown>;
+
+          if (nextStatic !== input) {
+            learnStaticKeys(nextStatic);
+          }
 
           let changed = nextStatic !== input || evictingKeys.size > 0;
           const values: unknown[] = [];
@@ -224,12 +260,8 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
 
           const next: Record<string, unknown> = { ...nextStatic };
 
-          for (const key in current) {
-            if (!slices.has(key) && !evictingKeys.has(key) && isSegmentKey(key)) {
-              // A slice of a segment that is not present yet, e.g. from a
-              // preloaded state: kept so the segment starts from it.
-              next[key] = current[key];
-            }
+          for (const key of pendingSlices) {
+            next[key] = current[key];
           }
 
           let index = 0;
@@ -240,6 +272,7 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
           return next;
         };
 
+      probeStaticKeys(rootReducer);
       const store = createStore(wrapReducer(rootReducer), preloadedState);
 
       let batchDepth = 0;
@@ -336,6 +369,10 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
 
         if (other !== undefined) {
           throw new Error(`Two different segments use the key "${segment.key}"`);
+        }
+
+        if (segment.reducer && staticKeys.has(segment.key)) {
+          throw new Error(`Segment "${segment.key}" uses the key of a slice of the static state`);
         }
 
         if (segment.epics.length > 0 && epicRunner === undefined) {
@@ -614,6 +651,7 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
       return {
         ...store,
         replaceReducer(nextReducer: AnyReducer) {
+          probeStaticKeys(nextReducer);
           store.replaceReducer(wrapReducer(nextReducer));
         },
         sparse,

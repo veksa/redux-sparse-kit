@@ -20,7 +20,7 @@ const setup = (options: SparseOptions = {}) => {
     },
   };
   const recorder: Reducer<null> = (state = null, action) => {
-    if (action.type.startsWith('@@sparse/')) {
+    if (action.type === SparseActionTypes.INJECT || action.type === SparseActionTypes.EVICT) {
       actions.push(action);
     }
     return state;

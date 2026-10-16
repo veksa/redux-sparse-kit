@@ -151,7 +151,8 @@ const ordersPage = defineSegment({
 
 A dependency has to be defined before the segments that list it, so the
 dependency graph cannot have cycles. Two different segments cannot use the same
-key in one store at the same time.
+key in one store at the same time, and a segment with a reducer cannot use a key
+of the static state: acquiring it throws.
 
 ### Typing epics
 

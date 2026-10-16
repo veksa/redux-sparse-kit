@@ -12,7 +12,7 @@ const counter =
 const setup = (options: SparseOptions = {}) => {
   const actions: Action[] = [];
   const log: Reducer<null> = (state = null, action) => {
-    if (action.type.startsWith('@@sparse/')) {
+    if (action.type === SparseActionTypes.INJECT || action.type === SparseActionTypes.EVICT) {
       actions.push(action);
     }
     return state;
