@@ -1,5 +1,5 @@
 import type { Action, Reducer, StoreEnhancer, StoreEnhancerStoreCreator } from 'redux';
-import type { AnySegment, SegmentEpic } from './segment';
+import type { AnySegment, SegmentEpic, WhileIdle } from './segment';
 import { isSegmentKey } from './segment';
 
 /**
@@ -77,6 +77,11 @@ export interface SparseOptions {
    * override it. Defaults to one minute.
    */
   idleTimeout?: number;
+  /**
+   * What an idle segment does until it is evicted. Segments can override it.
+   * Defaults to `keep-running`.
+   */
+  whileIdle?: WhileIdle;
 }
 
 interface Entry {
@@ -89,6 +94,10 @@ interface Entry {
   timer: ReturnType<typeof setTimeout> | undefined;
   /** Idle for its whole idle timeout, so evicted by the next sweep. */
   expired: boolean;
+  /** Idle with its epics stopped. */
+  paused: boolean;
+  /** Idle with its reducer skipped. */
+  frozen: boolean;
 }
 
 type AnyReducer = Reducer<any, Action, any>;
@@ -96,6 +105,8 @@ type AnyReducer = Reducer<any, Action, any>;
 const emptyKeys: ReadonlySet<string> = new Set();
 
 const defaultIdleTimeout = 60_000;
+
+const whileIdleValues: readonly WhileIdle[] = ['keep-running', 'pause-epics', 'freeze'];
 
 // Longer delays overflow `setTimeout` and would fire right away.
 const maxTimerDelay = 2 ** 31 - 1;
@@ -114,10 +125,14 @@ const scheduleIdle = (callback: () => void) => {
  * static state; segment slices live next to it under their keys.
  */
 export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<SparseStoreExt> {
-  const { epicRunner, idleTimeout = defaultIdleTimeout } = options;
+  const { epicRunner, idleTimeout = defaultIdleTimeout, whileIdle = 'keep-running' } = options;
 
   if (!(idleTimeout >= 0)) {
     throw new RangeError('The idle timeout must be a non-negative number');
+  }
+
+  if (!whileIdleValues.includes(whileIdle)) {
+    throw new RangeError(`whileIdle must be one of ${whileIdleValues.join(', ')}`);
   }
 
   const enhancer =
@@ -162,7 +177,8 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
 
           for (const [key, entry] of entries) {
             const previous = current[key];
-            const value = entry.segment.reducer(previous, action);
+            const value =
+              entry.frozen && key in current ? previous : entry.segment.reducer(previous, action);
             values.push(value);
             if (value !== previous || !(key in current)) {
               changed = true;
@@ -220,7 +236,9 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
           dispatchSparse(SparseActionTypes.INJECT, keys);
           // Started once their slices are in the state, deps first.
           for (const entry of injected) {
-            startEpics(entry);
+            if (!entry.paused) {
+              startEpics(entry);
+            }
           }
           emit({ type: 'inject', keys });
         }
@@ -313,7 +331,15 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
           return;
         }
 
-        const entry: Entry = { segment, holders: 1, stops: [], timer: undefined, expired: false };
+        const entry: Entry = {
+          segment,
+          holders: 1,
+          stops: [],
+          timer: undefined,
+          expired: false,
+          paused: false,
+          frozen: false,
+        };
         entries.set(segment.key, entry);
 
         // Dependencies first, so they are injected before their dependents.
@@ -349,6 +375,14 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
       };
 
       const becomeIdle = (entry: Entry, timeout: number) => {
+        const policy = entry.segment.whileIdle ?? whileIdle;
+
+        if (policy !== 'keep-running') {
+          entry.paused = true;
+          entry.frozen = policy === 'freeze';
+          stopEpics(entry);
+        }
+
         if (timeout <= maxTimerDelay) {
           entry.timer = setTimeout(() => {
             entry.timer = undefined;
@@ -363,6 +397,16 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
         clearTimeout(entry.timer);
         entry.timer = undefined;
         entry.expired = false;
+        entry.frozen = false;
+
+        if (entry.paused) {
+          entry.paused = false;
+          // Not injected yet: its epics start once it is.
+          if (!pendingInject.includes(entry)) {
+            startEpics(entry);
+          }
+        }
+
         emit({ type: 'revive', key: entry.segment.key });
       };
 
