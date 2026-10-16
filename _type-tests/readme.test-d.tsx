@@ -79,6 +79,20 @@ defineSegment({ key: 'orders', reducer: ordersReducer, epics: [loadOrdersEpic] }
 
 expectTypeOf<ScopeStateOf<typeof ordersSegment>>().toMatchTypeOf<OrdersState>();
 
+declare const pollPricesEpic: Epic;
+declare const pricesReducer: Reducer<number[]>;
+const pricesSegment = defineSegment({ key: 'prices', reducer: pricesReducer });
+const pricePolling = defineSegment({ key: 'pricePolling', epics: [pollPricesEpic] });
+
+const ordersPage = defineSegment({
+  key: 'ordersPage',
+  deps: [ordersSegment, pricesSegment, pricePolling],
+});
+
+expectTypeOf<StateOfSegments<typeof pricePolling | typeof pricesSegment>>().toEqualTypeOf<{
+  prices: number[];
+}>();
+
 // Store options
 sparseEnhancer({
   idleTimeout: 60_000,
@@ -105,7 +119,7 @@ declare const Spinner: () => null;
 declare const OrdersTable: () => null;
 
 const page = (
-  <SparseScope segments={[ordersSegment]} fallback={<Spinner />}>
+  <SparseScope segments={[ordersPage]} fallback={<Spinner />}>
     <OrdersTable />
   </SparseScope>
 );

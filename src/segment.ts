@@ -31,14 +31,26 @@ export type WhileIdle = 'keep-running' | 'pause-epics' | 'freeze';
  */
 export type SegmentEpic = (...args: any[]) => unknown;
 
+/**
+ * A reducer, the epics that drive it and the segments it depends on, injected
+ * together and evicted together. Its `State` is `never` when it has no
+ * reducer: it then owns no slice of the state.
+ */
 export interface Segment<
   Key extends string = string,
   State = any,
   Deps extends readonly AnySegment[] = readonly AnySegment[],
 > {
-  /** The top-level key of the store state the segment's reducer owns. */
+  /**
+   * Names the segment, and is the top-level key of the state its reducer
+   * owns when it has one.
+   */
   readonly key: Key;
-  readonly reducer: Reducer<State>;
+  readonly reducer: unknown extends State
+    ? Reducer<any> | undefined
+    : [State] extends [never]
+      ? undefined
+      : Reducer<State>;
   /** Segments that must be present for as long as this one is. */
   readonly deps: Deps;
   readonly epics: readonly SegmentEpic[];
@@ -48,12 +60,31 @@ export interface Segment<
   readonly whileIdle: WhileIdle | undefined;
 }
 
-export type AnySegment = Segment<string, any, readonly any[]>;
+/**
+ * Any segment, with or without a reducer. Spelled out rather than written as
+ * `Segment<string, any>`, which a segment without a reducer would not match.
+ */
+export interface AnySegment {
+  readonly key: string;
+  readonly reducer: Reducer<any> | undefined;
+  readonly deps: readonly AnySegment[];
+  readonly epics: readonly SegmentEpic[];
+  readonly idleTimeout: number | undefined;
+  readonly whileIdle: WhileIdle | undefined;
+}
 
-/** The state slice each of the given segments contributes to the store. */
+type SliceKeyOf<S> =
+  S extends Segment<infer Key, infer State, any> ? ([State] extends [never] ? never : Key) : never;
+
+/**
+ * The state slice each of the given segments contributes to the store;
+ * segments without a reducer contribute none.
+ */
 export type StateOfSegments<Segments extends AnySegment> = {
-  [S in Segments as S['key']]: S extends Segment<string, infer State, any> ? State : never;
+  [S in Segments as SliceKeyOf<S>]: S extends Segment<string, infer State, any> ? State : never;
 };
+
+type OwnSliceOf<Key extends string, State> = [State] extends [never] ? {} : { [K in Key]: State };
 
 /**
  * The state a segment may read: the static state, its own slice and the
@@ -98,10 +129,11 @@ export interface SegmentOptions<
   Epics extends readonly SegmentEpic[],
 > {
   key: Key;
-  reducer: Reducer<State>;
+  /** Omitted for a segment that only runs epics or only bundles its deps. */
+  reducer?: Reducer<State>;
   deps?: Deps;
   epics?: Epics &
-    ValidateEpics<Epics, StaticState & StateOfSegments<Deps[number]> & { [K in Key]: State }>;
+    ValidateEpics<Epics, StaticState & StateOfSegments<Deps[number]> & OwnSliceOf<Key, State>>;
   idleTimeout?: number;
   whileIdle?: WhileIdle;
 }
@@ -109,21 +141,21 @@ export interface SegmentOptions<
 const definedKeys = new Set<string>();
 
 /**
- * Whether a segment with this key has been defined. Lets dev checks tell a
- * read of a segment's slice from a read of static state.
+ * Whether a segment with a reducer has been defined under this key. Lets dev
+ * checks tell a read of a segment's slice from a read of static state.
  */
 export const isSegmentKey = (key: string): boolean => definedKeys.has(key);
 
 /**
  * Defines a segment: a reducer, the epics that drive it and the segments it
- * depends on, injected together and evicted together.
+ * depends on, injected together and evicted together. Each part is optional.
  *
  * A dependency has to be defined before the segment that lists it, so the
  * dependency graph cannot contain a cycle.
  */
 export function defineSegment<
   const Key extends string,
-  State,
+  State = never,
   const Deps extends readonly AnySegment[] = [],
   const Epics extends readonly SegmentEpic[] = [],
 >(options: SegmentOptions<Key, State, Deps, Epics>): Segment<Key, State, Deps> {
@@ -140,7 +172,7 @@ export function defineSegment<
     throw new TypeError('A segment key must be a non-empty string');
   }
 
-  if (typeof reducer !== 'function') {
+  if (reducer !== undefined && typeof reducer !== 'function') {
     throw new TypeError(`The reducer of segment "${key}" must be a function`);
   }
 
@@ -148,9 +180,11 @@ export function defineSegment<
     throw new RangeError(`The idle timeout of segment "${key}" must be a non-negative number`);
   }
 
-  definedKeys.add(key);
+  if (reducer !== undefined) {
+    definedKeys.add(key);
+  }
 
-  return Object.freeze({
+  const segment = Object.freeze({
     key,
     reducer,
     deps: Object.freeze([...deps]) as unknown as Deps,
@@ -158,4 +192,6 @@ export function defineSegment<
     idleTimeout,
     whileIdle,
   });
+
+  return segment as Segment<Key, State, Deps>;
 }

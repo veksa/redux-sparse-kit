@@ -77,3 +77,33 @@ defineSegment({
   // @ts-expect-error the epic expects a different shape of the segment's own slice
   epics: [readsWrongType],
 });
+
+// A segment without a reducer owns no slice.
+const poller = defineSegment({ key: 'poller', epics: [readsNothing] });
+
+expectTypeOf(poller).toEqualTypeOf<Segment<'poller', never, []>>();
+expectTypeOf(poller.reducer).toEqualTypeOf<undefined>();
+expectTypeOf(orders.reducer).toEqualTypeOf<import('redux').Reducer<Orders>>();
+expectTypeOf<StateOfSegments<typeof poller | typeof account>>().toEqualTypeOf<{
+  account: Account;
+}>();
+
+const ordersPage = defineSegment({ key: 'ordersPage', deps: [orders, poller] });
+
+expectTypeOf<ScopeStateOf<typeof ordersPage>>().toEqualTypeOf<
+  { router: { path: string } } & { orders: Orders }
+>();
+
+declare const readsPoller: Epic<{ poller: unknown; account: Account }>;
+
+// It reads the static state and its deps.
+declare const readsAccount: Epic<{ account: Account }>;
+
+defineSegment({ key: 'poller', deps: [account], epics: [readsAccount, readsNothing] });
+
+defineSegment({
+  key: 'poller',
+  deps: [account],
+  // @ts-expect-error a segment without a reducer has no slice of its own to read
+  epics: [readsPoller],
+});

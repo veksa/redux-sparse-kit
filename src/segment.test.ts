@@ -53,6 +53,18 @@ describe('defineSegment', () => {
     expect(isSegmentKey('recorded')).toBe(true);
   });
 
+  it('defines a segment without a reducer, which owns no slice', () => {
+    const epic = () => undefined;
+    const poller = defineSegment({ key: 'reducerless', epics: [epic] });
+    const bundle = defineSegment({ key: 'bundle', deps: [poller] });
+
+    expect(poller.reducer).toBeUndefined();
+    expect(poller.epics).toEqual([epic]);
+    expect(bundle.deps).toEqual([poller]);
+    expect(isSegmentKey('reducerless')).toBe(false);
+    expect(isSegmentKey('bundle')).toBe(false);
+  });
+
   it('rejects invalid options', () => {
     expect(() => defineSegment({ key: '', reducer: counter })).toThrow(TypeError);
     expect(() => defineSegment({ key: 'x', reducer: 1 as never })).toThrow(TypeError);

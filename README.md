@@ -13,7 +13,7 @@ mounts and evicted some time after it is gone, so the cost of a dispatch
 follows what the user is looking at, not the size of the codebase.
 
 - **Segments** - a reducer, its epics and the segments it depends on, injected
-  and evicted as one unit.
+  and evicted as one unit. Each part is optional.
 - **Reference counting** - a segment stays while anything holds it; shared
   segments and dependencies are never evicted from under a feature.
 - **Idle eviction** - a released segment waits before it is evicted, so moving
@@ -136,6 +136,19 @@ defineSegment({
 });
 ```
 
+Every part but the key is optional. A segment without a reducer owns no slice
+of the state: it can run epics only, or only bundle the segments it depends on,
+so that one scope holds a whole page.
+
+```ts
+const pricePolling = defineSegment({ key: 'pricePolling', epics: [pollPricesEpic] });
+
+const ordersPage = defineSegment({
+  key: 'ordersPage',
+  deps: [ordersSegment, pricesSegment, pricePolling],
+});
+```
+
 A dependency has to be defined before the segments that list it, so the
 dependency graph cannot have cycles. Two different segments cannot use the same
 key in one store at the same time.
@@ -183,14 +196,17 @@ declare module 'redux-sparse-kit' {
      └───────────────────────── evict ───────────────────────┘ maxIdle
 ```
 
-- **Injecting** dispatches `@@sparse/INJECT` with the keys of every segment the
-  call brings in, dependencies first, then starts their epics in that order.
+- **Injecting** dispatches `@@sparse/INJECT` with the keys of the slices the
+  call brings in, dependencies first, then starts the epics of the injected
+  segments in that order.
 - **Releasing** the last hold makes a segment idle. Its dependencies stay held
   by it.
 - **Reviving** an idle segment costs nothing: its slice and epics are still
   there.
 - **Evicting** stops the epics of the evicted segments, dependents first, then
-  dispatches `@@sparse/EVICT`, which removes their slices. Dependencies that
+  dispatches `@@sparse/EVICT`, which removes their slices.
+- Segments without a reducer add and remove no slice: when a change involves
+  only such segments, no action is dispatched. Dependencies that
   only the evicted segments held are evicted in the same action. Segments that
   expire together are swept together, when the browser is idle.
 

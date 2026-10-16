@@ -171,8 +171,12 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
       // Keys being removed by the EVICT action currently being reduced.
       let evictingKeys: ReadonlySet<string> = emptyKeys;
 
+      // Injected segments that own a slice of the state, by key: only those
+      // with a reducer. They keep reducing until the action that evicts them.
+      const slices = new Map<string, Entry>();
+
       const isDynamicKey = (key: string) =>
-        entries.has(key) || evictingKeys.has(key) || isSegmentKey(key);
+        slices.has(key) || evictingKeys.has(key) || isSegmentKey(key);
 
       const wrapReducer =
         (root: AnyReducer): AnyReducer =>
@@ -204,10 +208,10 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
           let changed = nextStatic !== input || evictingKeys.size > 0;
           const values: unknown[] = [];
 
-          for (const [key, entry] of entries) {
+          for (const [key, entry] of slices) {
             const previous = current[key];
             const value =
-              entry.frozen && key in current ? previous : entry.segment.reducer(previous, action);
+              entry.frozen && key in current ? previous : entry.segment.reducer!(previous, action);
             values.push(value);
             if (value !== previous || !(key in current)) {
               changed = true;
@@ -221,7 +225,7 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
           const next: Record<string, unknown> = { ...nextStatic };
 
           for (const key in current) {
-            if (!entries.has(key) && !evictingKeys.has(key) && isSegmentKey(key)) {
+            if (!slices.has(key) && !evictingKeys.has(key) && isSegmentKey(key)) {
               // A slice of a segment that is not present yet, e.g. from a
               // preloaded state: kept so the segment starts from it.
               next[key] = current[key];
@@ -229,7 +233,7 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
           }
 
           let index = 0;
-          for (const key of entries.keys()) {
+          for (const key of slices.keys()) {
             next[key] = values[index++];
           }
 
@@ -262,7 +266,16 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
         if (pendingInject.length > 0) {
           const injected = pendingInject.splice(0);
           const keys = injected.map((entry) => entry.segment.key);
-          dispatchSparse(SparseActionTypes.INJECT, keys);
+          const sliceKeys: string[] = [];
+          for (const entry of injected) {
+            if (entry.segment.reducer) {
+              slices.set(entry.segment.key, entry);
+              sliceKeys.push(entry.segment.key);
+            }
+          }
+          if (sliceKeys.length > 0) {
+            dispatchSparse(SparseActionTypes.INJECT, sliceKeys);
+          }
           // Started once their slices are in the state, deps first.
           for (const entry of injected) {
             if (!entry.paused) {
@@ -279,11 +292,14 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
           for (const entry of evicted) {
             stopEpics(entry);
           }
-          evictingKeys = new Set(keys);
-          try {
-            dispatchSparse(SparseActionTypes.EVICT, keys);
-          } finally {
-            evictingKeys = emptyKeys;
+          const sliceKeys = keys.filter((key) => slices.delete(key));
+          if (sliceKeys.length > 0) {
+            evictingKeys = new Set(sliceKeys);
+            try {
+              dispatchSparse(SparseActionTypes.EVICT, sliceKeys);
+            } finally {
+              evictingKeys = emptyKeys;
+            }
           }
           emit({ type: 'evict', keys });
         }
