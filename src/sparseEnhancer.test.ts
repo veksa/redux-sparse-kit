@@ -24,7 +24,7 @@ const recorder = () => {
 };
 
 const createSparseStore = (staticReducer: Reducer = combineReducers({ app: counter('app') })) =>
-  createStore(staticReducer, sparseEnhancer());
+  createStore(staticReducer, sparseEnhancer({ idleTimeout: 0 }));
 
 describe('sparseEnhancer', () => {
   it('keeps the static state owned by the root reducer', () => {
@@ -160,7 +160,7 @@ describe('sparseEnhancer', () => {
     const store = createStore(
       combineReducers({ app: counter('app') }),
       { app: 1, orders: 5 } as { app: number },
-      sparseEnhancer(),
+      sparseEnhancer({ idleTimeout: 0 }),
     );
 
     store.dispatch({ type: 'app' });
@@ -272,7 +272,10 @@ describe('sparseEnhancer', () => {
     };
     const store = createStore(
       combineReducers({ app: counter('app') }),
-      compose(applyMiddleware(middleware), sparseEnhancer()) as StoreEnhancer<SparseStoreExt>,
+      compose(
+        applyMiddleware(middleware),
+        sparseEnhancer({ idleTimeout: 0 }),
+      ) as StoreEnhancer<SparseStoreExt>,
     );
 
     store.sparse.acquire(defineSegment({ key: 'orders', reducer: counter('orders') }));
@@ -302,7 +305,7 @@ describe('sparseEnhancer epics', () => {
     const { log, runner } = createRunner(() => store.getState());
     store = createStore(
       combineReducers({ app: counter('app') }),
-      sparseEnhancer({ epicRunner: runner }),
+      sparseEnhancer({ epicRunner: runner, idleTimeout: 0 }),
     );
     return { log, store };
   };

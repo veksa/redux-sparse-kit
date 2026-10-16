@@ -24,7 +24,7 @@ const setup = (dependencies: Record<string, unknown> = {}) => {
     combineReducers({ pongs: count('pong') }),
     compose(
       applyMiddleware(epicMiddleware),
-      sparseEnhancer({ epicRunner: createEpicRunner(epicMiddleware) }),
+      sparseEnhancer({ epicRunner: createEpicRunner(epicMiddleware), idleTimeout: 0 }),
     ) as StoreEnhancer<SparseStoreExt>,
   );
   return { epicMiddleware, store };

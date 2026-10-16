@@ -22,7 +22,18 @@ export interface SparseAction extends Action<
 
 export type SparseEvent =
   | { type: 'inject'; keys: readonly string[] }
-  | { type: 'evict'; keys: readonly string[] };
+  | { type: 'evict'; keys: readonly string[] }
+  /** A segment is no longer held and waits for its idle timeout. */
+  | { type: 'idle'; key: string }
+  /** An idle segment is held again before it was evicted. */
+  | { type: 'revive'; key: string };
+
+export interface SparseStats {
+  /** Keys of present segments that something holds. */
+  active: string[];
+  /** Keys of present segments waiting for their idle timeout. */
+  idle: string[];
+}
 
 export interface SparseController {
   /**
@@ -38,8 +49,10 @@ export interface SparseController {
    * so that they reach the store as a single action of each kind.
    */
   batch<T>(fn: () => T): T;
-  /** Listens to segments being injected and evicted. */
+  /** Listens to segments being injected, going idle, revived and evicted. */
   subscribe(listener: (event: SparseEvent) => void): () => void;
+  /** The keys of the present segments, by state. */
+  stats(): SparseStats;
 }
 
 export interface SparseStoreExt {
@@ -58,6 +71,12 @@ export interface EpicRunner {
 export interface SparseOptions {
   /** Required as soon as a held segment has epics. */
   epicRunner?: EpicRunner;
+  /**
+   * How long a segment nothing holds stays present before it is evicted, in
+   * milliseconds. `0` evicts it right away, `Infinity` never. Segments can
+   * override it. Defaults to one minute.
+   */
+  idleTimeout?: number;
 }
 
 interface Entry {
@@ -66,11 +85,28 @@ interface Entry {
   holders: number;
   /** Stops the segment's running epics. */
   stops: (() => void)[];
+  /** Fires once the segment has been idle for its idle timeout. */
+  timer: ReturnType<typeof setTimeout> | undefined;
+  /** Idle for its whole idle timeout, so evicted by the next sweep. */
+  expired: boolean;
 }
 
 type AnyReducer = Reducer<any, Action, any>;
 
 const emptyKeys: ReadonlySet<string> = new Set();
+
+const defaultIdleTimeout = 60_000;
+
+// Longer delays overflow `setTimeout` and would fire right away.
+const maxTimerDelay = 2 ** 31 - 1;
+
+const scheduleIdle = (callback: () => void) => {
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(callback, { timeout: 1000 });
+  } else {
+    setTimeout(callback, 0);
+  }
+};
 
 /**
  * A store enhancer that lets segments be injected into and evicted from a
@@ -78,7 +114,11 @@ const emptyKeys: ReadonlySet<string> = new Set();
  * static state; segment slices live next to it under their keys.
  */
 export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<SparseStoreExt> {
-  const { epicRunner } = options;
+  const { epicRunner, idleTimeout = defaultIdleTimeout } = options;
+
+  if (!(idleTimeout >= 0)) {
+    throw new RangeError('The idle timeout must be a non-negative number');
+  }
 
   const enhancer =
     (createStore: StoreEnhancerStoreCreator) =>
@@ -252,6 +292,9 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
         const existing = entries.get(segment.key);
 
         if (existing) {
+          if (existing.holders === 0) {
+            revive(existing);
+          }
           existing.holders++;
           return;
         }
@@ -270,7 +313,7 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
           return;
         }
 
-        const entry: Entry = { segment, holders: 1, stops: [] };
+        const entry: Entry = { segment, holders: 1, stops: [], timer: undefined, expired: false };
         entries.set(segment.key, entry);
 
         // Dependencies first, so they are injected before their dependents.
@@ -281,28 +324,84 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
         pendingInject.push(entry);
       };
 
-      const unhold = (segment: AnySegment) => {
+      /**
+       * Drops a hold. A segment left without holders goes idle, unless it was
+       * only held by a segment being evicted: then it is evicted with it.
+       */
+      const unhold = (segment: AnySegment, cascade = false) => {
         // Only reached for segments this store holds: a release undoes exactly
         // the holds its acquire took.
         const entry = entries.get(segment.key)!;
 
         entry.holders--;
 
-        if (entry.holders === 0) {
-          entries.delete(segment.key);
+        if (entry.holders > 0) {
+          return;
+        }
 
-          const pendingIndex = pendingInject.indexOf(entry);
-          if (pendingIndex !== -1) {
-            // Released before it reached the store: nothing to evict.
-            pendingInject.splice(pendingIndex, 1);
-          } else {
-            pendingEvict.push(entry);
-          }
+        const timeout = segment.idleTimeout ?? idleTimeout;
 
-          // Dependents first, so they are evicted before their dependencies.
-          for (const dep of segment.deps) {
-            unhold(dep);
+        if (cascade || timeout === 0) {
+          evict(entry);
+        } else {
+          becomeIdle(entry, timeout);
+        }
+      };
+
+      const becomeIdle = (entry: Entry, timeout: number) => {
+        if (timeout <= maxTimerDelay) {
+          entry.timer = setTimeout(() => {
+            entry.timer = undefined;
+            entry.expired = true;
+            scheduleSweep();
+          }, timeout);
+        }
+        emit({ type: 'idle', key: entry.segment.key });
+      };
+
+      const revive = (entry: Entry) => {
+        clearTimeout(entry.timer);
+        entry.timer = undefined;
+        entry.expired = false;
+        emit({ type: 'revive', key: entry.segment.key });
+      };
+
+      const evict = (entry: Entry) => {
+        clearTimeout(entry.timer);
+        entries.delete(entry.segment.key);
+
+        const pendingIndex = pendingInject.indexOf(entry);
+        if (pendingIndex !== -1) {
+          // Released before it reached the store: nothing to evict.
+          pendingInject.splice(pendingIndex, 1);
+        } else {
+          pendingEvict.push(entry);
+        }
+
+        // Dependents first, so they are evicted before their dependencies.
+        for (const dep of entry.segment.deps) {
+          unhold(dep, true);
+        }
+      };
+
+      let sweepScheduled = false;
+
+      /** Evicts every expired segment with a single action. */
+      const sweep = () => {
+        sweepScheduled = false;
+        batch(() => {
+          for (const entry of entries.values()) {
+            if (entry.expired) {
+              evict(entry);
+            }
           }
+        });
+      };
+
+      const scheduleSweep = () => {
+        if (!sweepScheduled) {
+          sweepScheduled = true;
+          scheduleIdle(sweep);
         }
       };
 
@@ -339,6 +438,16 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
         has(segmentOrKey) {
           const key = typeof segmentOrKey === 'string' ? segmentOrKey : segmentOrKey.key;
           return entries.has(key) && !pendingInject.includes(entries.get(key)!);
+        },
+
+        stats() {
+          const stats: SparseStats = { active: [], idle: [] };
+          for (const [key, entry] of entries) {
+            if (!pendingInject.includes(entry)) {
+              (entry.holders > 0 ? stats.active : stats.idle).push(key);
+            }
+          }
+          return stats;
         },
 
         batch,

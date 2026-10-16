@@ -17,5 +17,6 @@ export type {
   SparseController,
   SparseEvent,
   SparseOptions,
+  SparseStats,
   SparseStoreExt,
 } from './sparseEnhancer';
