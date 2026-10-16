@@ -1,5 +1,5 @@
 import type { Action, Reducer, StoreEnhancer, StoreEnhancerStoreCreator } from 'redux';
-import type { AnySegment } from './segment';
+import type { AnySegment, SegmentEpic } from './segment';
 import { isSegmentKey } from './segment';
 
 /**
@@ -46,12 +46,26 @@ export interface SparseStoreExt {
   readonly sparse: SparseController;
 }
 
-export interface SparseOptions {}
+/**
+ * Starts segment epics. `redux-sparse-kit/observable` provides one for
+ * redux-observable.
+ */
+export interface EpicRunner {
+  /** Starts `epic` and returns a function that stops it. */
+  run(epic: SegmentEpic, segment: AnySegment): () => void;
+}
+
+export interface SparseOptions {
+  /** Required as soon as a held segment has epics. */
+  epicRunner?: EpicRunner;
+}
 
 interface Entry {
   readonly segment: AnySegment;
   /** Holds by `acquire` callers and by present segments that depend on it. */
   holders: number;
+  /** Stops the segment's running epics. */
+  stops: (() => void)[];
 }
 
 type AnyReducer = Reducer<any, Action, any>;
@@ -63,7 +77,9 @@ const emptyKeys: ReadonlySet<string> = new Set();
  * running store. The root reducer passed to `createStore` keeps owning the
  * static state; segment slices live next to it under their keys.
  */
-export function sparseEnhancer(_options: SparseOptions = {}): StoreEnhancer<SparseStoreExt> {
+export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<SparseStoreExt> {
+  const { epicRunner } = options;
+
   const enhancer =
     (createStore: StoreEnhancerStoreCreator) =>
     (rootReducer: AnyReducer, preloadedState?: unknown) => {
@@ -159,14 +175,23 @@ export function sparseEnhancer(_options: SparseOptions = {}): StoreEnhancer<Spar
         }
 
         if (pendingInject.length > 0) {
-          const keys = pendingInject.splice(0).map((entry) => entry.segment.key);
+          const injected = pendingInject.splice(0);
+          const keys = injected.map((entry) => entry.segment.key);
           dispatchSparse(SparseActionTypes.INJECT, keys);
+          // Started once their slices are in the state, deps first.
+          for (const entry of injected) {
+            startEpics(entry);
+          }
           emit({ type: 'inject', keys });
         }
 
         if (pendingEvict.length > 0) {
           const evicted = pendingEvict.splice(0);
           const keys = evicted.map((entry) => entry.segment.key);
+          // Stopped while their slices are still in the state, dependents first.
+          for (const entry of evicted) {
+            stopEpics(entry);
+          }
           evictingKeys = new Set(keys);
           try {
             dispatchSparse(SparseActionTypes.EVICT, keys);
@@ -174,6 +199,18 @@ export function sparseEnhancer(_options: SparseOptions = {}): StoreEnhancer<Spar
             evictingKeys = emptyKeys;
           }
           emit({ type: 'evict', keys });
+        }
+      };
+
+      const startEpics = (entry: Entry) => {
+        for (const epic of entry.segment.epics) {
+          entry.stops.push(epicRunner!.run(epic, entry.segment));
+        }
+      };
+
+      const stopEpics = (entry: Entry) => {
+        for (const stop of entry.stops.splice(0)) {
+          stop();
         }
       };
 
@@ -196,6 +233,12 @@ export function sparseEnhancer(_options: SparseOptions = {}): StoreEnhancer<Spar
 
         if (other !== undefined) {
           throw new Error(`Two different segments use the key "${segment.key}"`);
+        }
+
+        if (segment.epics.length > 0 && epicRunner === undefined) {
+          throw new Error(
+            `Segment "${segment.key}" has epics, but sparseEnhancer was created without an epicRunner`,
+          );
         }
 
         seen.set(segment.key, segment);
@@ -227,7 +270,7 @@ export function sparseEnhancer(_options: SparseOptions = {}): StoreEnhancer<Spar
           return;
         }
 
-        const entry: Entry = { segment, holders: 1 };
+        const entry: Entry = { segment, holders: 1, stops: [] };
         entries.set(segment.key, entry);
 
         // Dependencies first, so they are injected before their dependents.

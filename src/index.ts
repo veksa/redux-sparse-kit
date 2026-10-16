@@ -12,6 +12,7 @@ export type {
 } from './segment';
 export { SparseActionTypes, sparseEnhancer } from './sparseEnhancer';
 export type {
+  EpicRunner,
   SparseAction,
   SparseController,
   SparseEvent,

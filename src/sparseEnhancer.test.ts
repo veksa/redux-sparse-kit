@@ -5,7 +5,7 @@ import {
   compose,
   legacy_createStore as createStore,
 } from 'redux';
-import type { SparseEvent, SparseStoreExt } from './sparseEnhancer';
+import type { EpicRunner, SparseEvent, SparseStoreExt } from './sparseEnhancer';
 import { SparseActionTypes, sparseEnhancer } from './sparseEnhancer';
 import { defineSegment } from './segment';
 
@@ -280,5 +280,104 @@ describe('sparseEnhancer', () => {
 
     expect(store.getState()).toEqual({ app: 0, orders: 1 });
     expect(seen).toContain('orders');
+  });
+});
+
+describe('sparseEnhancer epics', () => {
+  const createRunner = (getState: () => Record<string, unknown>) => {
+    const log: string[] = [];
+    const runner: EpicRunner = {
+      run(epic, segment) {
+        log.push(`start ${segment.key}:${epic.name} present=${segment.key in getState()}`);
+        return () => {
+          log.push(`stop ${segment.key}:${epic.name} present=${segment.key in getState()}`);
+        };
+      },
+    };
+    return { log, runner };
+  };
+
+  const setup = () => {
+    let store: ReturnType<typeof createSparseStore>;
+    const { log, runner } = createRunner(() => store.getState());
+    store = createStore(
+      combineReducers({ app: counter('app') }),
+      sparseEnhancer({ epicRunner: runner }),
+    );
+    return { log, store };
+  };
+
+  function accountEpic() {}
+  function ordersEpic() {}
+  function ordersSecondEpic() {}
+
+  const account = defineSegment({
+    key: 'epicAccount',
+    reducer: counter('account'),
+    epics: [accountEpic],
+  });
+  const orders = defineSegment({
+    key: 'epicOrders',
+    reducer: counter('orders'),
+    deps: [account],
+    epics: [ordersEpic, ordersSecondEpic],
+  });
+
+  it('starts epics once their slices are present, deps first', () => {
+    const { log, store } = setup();
+
+    store.sparse.acquire(orders);
+
+    expect(log).toEqual([
+      'start epicAccount:accountEpic present=true',
+      'start epicOrders:ordersEpic present=true',
+      'start epicOrders:ordersSecondEpic present=true',
+    ]);
+  });
+
+  it('stops epics while their slices are still present, dependents first', () => {
+    const { log, store } = setup();
+    const release = store.sparse.acquire(orders);
+    log.length = 0;
+
+    release();
+
+    expect(log).toEqual([
+      'stop epicOrders:ordersEpic present=true',
+      'stop epicOrders:ordersSecondEpic present=true',
+      'stop epicAccount:accountEpic present=true',
+    ]);
+  });
+
+  it('keeps epics running for a segment held again within a batch', () => {
+    const { log, store } = setup();
+    const release = store.sparse.acquire(orders);
+    log.length = 0;
+
+    store.sparse.batch(() => {
+      release();
+      store.sparse.acquire(orders);
+    });
+
+    expect(log).toEqual([]);
+  });
+
+  it('starts epics again for a segment injected again', () => {
+    const { log, store } = setup();
+    store.sparse.acquire(account)();
+    log.length = 0;
+
+    store.sparse.acquire(account);
+
+    expect(log).toEqual(['start epicAccount:accountEpic present=true']);
+  });
+
+  it('requires an epic runner for segments with epics', () => {
+    const store = createSparseStore();
+
+    expect(() => store.sparse.acquire(orders)).toThrow(
+      'Segment "epicOrders" has epics, but sparseEnhancer was created without an epicRunner',
+    );
+    expect(store.sparse.has(orders)).toBe(false);
   });
 });
