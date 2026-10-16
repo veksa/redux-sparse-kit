@@ -245,6 +245,7 @@ const release = store.sparse.acquire(ordersSegment, pricesSegment);
 release(); // idempotent
 
 store.sparse.has(ordersSegment); // or has('orders')
+store.sparse.isStatic('session'); // true: the root reducer owns it
 store.sparse.stats(); // { active: ['orders', 'account'], idle: ['prices'] }
 
 store.sparse.batch(() => {

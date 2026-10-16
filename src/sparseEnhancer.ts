@@ -45,6 +45,11 @@ export interface SparseController {
   /** Whether a segment with this key is present in the store. */
   has(segmentOrKey: AnySegment | string): boolean;
   /**
+   * Whether the root reducer owns this key: a segment with a reducer cannot
+   * be acquired under it.
+   */
+  isStatic(key: string): boolean;
+  /**
    * Runs `fn`, deferring injections and evictions it causes until it returns,
    * so that they reach the store as a single action of each kind.
    */
@@ -626,6 +631,10 @@ export function sparseEnhancer(options: SparseOptions = {}): StoreEnhancer<Spars
         has(segmentOrKey) {
           const key = typeof segmentOrKey === 'string' ? segmentOrKey : segmentOrKey.key;
           return entries.has(key) && !pendingInject.includes(entries.get(key)!);
+        },
+
+        isStatic(key) {
+          return staticKeys.has(key);
         },
 
         stats() {

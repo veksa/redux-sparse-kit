@@ -35,6 +35,18 @@ describe('keys of the static state', () => {
     expect(store.getState()).toEqual({ sharedB: 6 });
   });
 
+  it('are reported by isStatic', () => {
+    const store = createStore(
+      combineReducers({ sharedD: counter('inc') }),
+      sparseEnhancer({ idleTimeout: 0 }),
+    );
+    store.sparse.acquire(defineSegment({ key: 'notStatic', reducer: counter('other') }));
+
+    expect(store.sparse.isStatic('sharedD')).toBe(true);
+    expect(store.sparse.isStatic('notStatic')).toBe(false);
+    expect(store.sparse.isStatic('missing')).toBe(false);
+  });
+
   it('cannot be taken by a segment with a reducer', () => {
     const store = createStore(
       combineReducers({ sharedC: counter('inc') }),

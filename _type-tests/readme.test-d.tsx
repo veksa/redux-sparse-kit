@@ -106,6 +106,7 @@ const release: () => void = store.sparse.acquire(ordersSegment, accountSegment);
 release();
 expectTypeOf(store.sparse.has(ordersSegment)).toEqualTypeOf<boolean>();
 expectTypeOf(store.sparse.has('orders')).toEqualTypeOf<boolean>();
+expectTypeOf(store.sparse.isStatic('session')).toEqualTypeOf<boolean>();
 expectTypeOf(store.sparse.stats()).toEqualTypeOf<SparseStats>();
 expectTypeOf(store.sparse.batch(() => 1)).toEqualTypeOf<number>();
 const unsubscribe: () => void = store.sparse.subscribe((event) => {
