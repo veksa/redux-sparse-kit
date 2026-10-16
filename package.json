@@ -1,6 +1,6 @@
 {
   "name": "redux-sparse-kit",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Dynamic reducers and epics for large Redux stores: only mounted features run on dispatch",
   "keywords": [
     "code-splitting",
