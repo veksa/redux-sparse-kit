@@ -12,4 +12,5 @@ export const useSparseSegments: SparseReact['useSparseSegments'] = defaults.useS
 export { createSparseReact } from './createSparseReact';
 export type { SparseReact, SparseReactOptions, SparseScopeProps } from './createSparseReact';
 export { getReactReduxContext } from './reactReduxContext';
+export type { ScopeViolation, ScopeViolationHandler } from './scopeChecks';
 export type { ReactReduxContextLike, ReactReduxContextValueLike } from './reactReduxContext';
