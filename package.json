@@ -49,6 +49,16 @@
         "types": "./dist/observable.d.ts",
         "default": "./dist/observable.js"
       }
+    },
+    "./react": {
+      "import": {
+        "types": "./dist/react.d.mts",
+        "default": "./dist/react.mjs"
+      },
+      "require": {
+        "types": "./dist/react.d.ts",
+        "default": "./dist/react.js"
+      }
     }
   },
   "scripts": {
@@ -64,12 +74,19 @@
     "clean": "rimraf dist"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^24.0.3",
+    "@types/react": "^19.0.12",
+    "@types/react-dom": "^19.0.4",
     "@vitest/coverage-v8": "^4.1.10",
     "expect-type": "^1.2.1",
     "jsdom": "^30.0.0",
     "oxfmt": "^0.61.0",
     "oxlint": "^1.76.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-redux": "^9.3.0",
     "redux": "^5.0.1",
     "redux-observable": "3.0.0-rc.3",
     "rimraf": "^6.0.1",
@@ -79,10 +96,14 @@
     "vitest": "^4.1.10"
   },
   "peerDependencies": {
+    "react": ">=18.0.0",
     "redux": "^5.0.0",
     "rxjs": "^7.0.0"
   },
   "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
     "rxjs": {
       "optional": true
     }
